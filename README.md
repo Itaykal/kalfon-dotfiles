@@ -4,13 +4,21 @@ Personal zsh dotfiles for macOS — AWS SSO account switching, Powerlevel10k ove
 
 ## Structure
 
-| File | Purpose |
-|------|---------|
-| `.entry` | Entrypoint — sources all other files in order. Add `source ~/kalfon-dotfiles/.entry` to `~/.zshrc`. |
-| `.vars` | Environment variables (e.g. `LC_TIME`). |
-| `.alias` | Shell aliases: k8s shortcuts (`kk`, `kx`, `kn`), IaC shortcuts (`tf`, `tg`), AWS switcher (`awsw`). |
-| `.functions` | Shell functions — currently `aws-switch`. |
-| `.p10k` | Powerlevel10k overrides. Source this after `~/.p10k.zsh`. |
+```
+kalfon-dotfiles/
+  .entry              # dynamic loader — sources all *.zsh from each dir in order
+  vars/
+    locale.zsh        # LC_TIME
+  aliases/
+    aws.zsh           # awsw
+    kubernetes.zsh    # kk, kx, kn
+    terraform.zsh     # tf, tg
+  functions/
+    aws-switch.zsh    # aws-switch function
+  p10k/
+    1-kubernetes.zsh  # kubecontext: placement, visibility, coloring
+    2-aws.zsh         # AWS segment: placement, coloring, content format
+```
 
 ## Installation
 
@@ -43,11 +51,11 @@ Run `awsw` to switch AWS accounts:
 4. Writes the selection into a single `[profile default]` in `~/.aws/config` — no profile sprawl.
 5. Exports `AWS_PROFILE`, `AWS_ACCOUNT_ID`, `AWS_ACCOUNT_NAME`, `AWS_ROLE_NAME`, and `AWS_DEFAULT_REGION`.
 
-The Powerlevel10k right prompt always shows the active account: `account-name  account-id  role  region`.
+The Powerlevel10k prompt always shows the active account: `account-name  account-id  role  region`.
 
-## Powerlevel10k overrides (`.p10k`)
+## Powerlevel10k overrides (`p10k/`)
 
-- **kubecontext** — own line at the top-left, above `dir/vcs`. Visible only when typing k8s commands.
-- **aws** — right prompt, immediately after the command timer. Always visible.
+- **kubecontext** (`1-kubernetes.zsh`) — own line at the top-left, above `dir/vcs`. Visible only when typing k8s commands.
+- **aws** (`2-aws.zsh`) — own line below kubecontext, above `dir/vcs`. Always visible.
 
-These overrides survive `p10k configure` regenerating `~/.p10k.zsh` because they live in a separate file.
+Files are numbered because the AWS block inserts relative to positions set by the kubernetes block — load order matters. These overrides survive `p10k configure` regenerating `~/.p10k.zsh` because they live in a separate file.

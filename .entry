@@ -1,3 +1,7 @@
-for file in .vars .alias .functions .p10k; do
-	source ~/kalfon-dotfiles/$file
+_dotfiles="${0:A:h}"
+for _dir in vars aliases functions p10k; do
+  for _file in "$_dotfiles/$_dir"/*.zsh(N); do
+    source "$_file"
+  done
 done
+unset _dotfiles _dir _file

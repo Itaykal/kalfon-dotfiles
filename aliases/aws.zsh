@@ -1,0 +1,1 @@
+alias awsw=aws-switch
