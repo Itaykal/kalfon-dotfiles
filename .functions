@@ -52,8 +52,8 @@ function aws-switch() {
   aws configure set region         "$sso_region" --profile default
 
   export AWS_PROFILE=default
+  export AWS_VAULT="$acct_name"       # p10k reads AWS_VAULT before AWS_PROFILE for display & class matching
   export AWS_ACCOUNT_ID="$acct_id"
-  export AWS_ACCOUNT_NAME="$acct_name"
   export AWS_ROLE_NAME="$role_name"
   export AWS_DEFAULT_REGION="$sso_region"
 
