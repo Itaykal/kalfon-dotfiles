@@ -7,18 +7,22 @@ Personal zsh dotfiles for macOS — AWS SSO account switching, Powerlevel10k ove
 ```
 kalfon-dotfiles/
   .entry              # dynamic loader — sources all *.zsh from each dir in order
-  vars/
+  init/               # initialization scripts that must run before everything else (third-party integrations, etc.)
+    fzf.zsh           # fzf key-bindings (Ctrl-R/Ctrl-T/Alt-C) + fuzzy completion
+  vars/               # exported environment variables only
     locale.zsh        # LC_TIME
-  aliases/
+  aliases/            # aliases only, one file per tool — no functions
     aws.zsh           # awsw
     kubernetes.zsh    # kk, kx, kn
     terraform.zsh     # tf, tg
-  functions/
+  functions/          # shell functions, one file per function — no aliases
     aws-switch.zsh    # aws-switch function
-  p10k/
+  p10k/               # Powerlevel10k overrides, numbered for load order
     1-kubernetes.zsh  # kubecontext: placement, visibility, coloring
     2-aws.zsh         # AWS segment: placement, coloring, content format
 ```
+
+Load order is `init → vars → aliases → functions → p10k`. `init/` runs first so anything later (vars, aliases, functions, prompt) can rely on third-party widgets and integrations already being in place.
 
 ## Installation
 
