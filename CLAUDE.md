@@ -11,6 +11,7 @@ vars/               # exported env vars
 aliases/            # aliases only, one file per tool (no functions)
 functions/          # shell functions, one file per function
 p10k/               # Powerlevel10k overrides (files are numbered for load order)
+k9s/                # k9s config (views.yaml, …) — symlinked into ~/Library/Application Support/k9s/
 ```
 
 ## Rules
@@ -25,3 +26,4 @@ p10k/               # Powerlevel10k overrides (files are numbered for load order
 - The AWS SSO session is always named `session`. The active profile is always `default`. Do not introduce new profile names.
 - `AWS_ACCOUNT_NAME`, `AWS_ACCOUNT_ID`, `AWS_ROLE_NAME`, `AWS_DEFAULT_REGION` are exported by `aws-switch` and referenced in the p10k content expansion — keep them in sync if either side changes.
 - `jq` and `fzf` are assumed to be installed. Do not add fallbacks for them.
+- `k9s/` is not sourced by `.entry` (it's not shell). Files there are symlinked into `~/Library/Application Support/k9s/` (e.g. `views.yaml`). Edit only via this repo. Bad column expressions in `views.yaml` fail silently in the UI — check `~/Library/Application Support/k9s/k9s.log` after changes.

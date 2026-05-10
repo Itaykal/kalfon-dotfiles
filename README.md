@@ -20,6 +20,8 @@ kalfon-dotfiles/
   p10k/               # Powerlevel10k overrides, numbered for load order
     1-kubernetes.zsh  # kubecontext: placement, visibility, coloring
     2-aws.zsh         # AWS segment: placement, coloring, content format
+  k9s/                # k9s config, symlinked into ~/Library/Application Support/k9s/
+    views.yaml        # enriched default columns for pods, deploys, sts, nodes, …
 ```
 
 Load order is `init → vars → aliases → functions → p10k`. `init/` runs first so anything later (vars, aliases, functions, prompt) can rely on third-party widgets and integrations already being in place.
@@ -28,22 +30,18 @@ Load order is `init → vars → aliases → functions → p10k`. `init/` runs f
 
 ```zsh
 git clone https://github.com/Itaykal/kalfon-dotfiles.git ~/kalfon-dotfiles
+~/kalfon-dotfiles/install.sh
 ```
 
-Add to `~/.zshrc` (after oh-my-zsh and p10k are loaded):
+`install.sh` handles everything:
 
-```zsh
-source ~/kalfon-dotfiles/.entry
-```
+- installs [oh-my-zsh](https://ohmyz.sh/) to `~/.oh-my-zsh` if missing
+- clones [Powerlevel10k](https://github.com/romkatv/powerlevel10k) to `~/powerlevel10k` if missing
+- runs `brew bundle` against [`Brewfile`](./Brewfile) (fzf, jq, direnv, k9s, kubectx, awscli)
+- symlinks `k9s/views.yaml` into `~/Library/Application Support/k9s/`
+- appends `source ~/kalfon-dotfiles/.entry` to `~/.zshrc` if not already there
 
-### Dependencies
-
-- [oh-my-zsh](https://ohmyz.sh/)
-- [Powerlevel10k](https://github.com/romkatv/powerlevel10k)
-- [fzf](https://github.com/junegunn/fzf) — `brew install fzf`
-- [jq](https://jqlang.github.io/jq/) — `brew install jq`
-- [k9s](https://k9scli.io/), [kubectx/kubens](https://github.com/ahmetb/kubectx) — for k8s aliases
-- AWS CLI v2 configured with an SSO session named `session`
+After install: `exec zsh`. Then `p10k configure` if first time on this machine. Configure AWS SSO with a session named `session` (`aws configure sso`).
 
 ## AWS SSO Switcher (`awsw`)
 

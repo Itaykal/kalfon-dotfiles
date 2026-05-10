@@ -1,0 +1,6 @@
+brew 'fzf'
+brew 'jq'
+brew 'direnv'
+brew 'k9s'
+brew 'kubectx'
+brew 'awscli'
