@@ -1,5 +1,6 @@
 export FZF_DEFAULT_OPTS="
   --height=30%
+  --layout=reverse
   --border=rounded
   --info=inline
   --prompt='❯ '
