@@ -1,8 +1,30 @@
 # kalfon-dotfiles — agent guide
 
-Personal zsh dotfiles repo. `CLAUDE.md` holds the full repo conventions (structure,
-shell layout rules, p10k/k9s/macos notes) — read it first. This file documents the
-release/versioning flow for the Rust tools.
+Personal zsh dotfiles + Rust CLIs for macOS. `CLAUDE.md` holds the full repo
+conventions (every shell layout rule, p10k/k9s/macos notes) — read it for detail.
+This file gives the layout at a glance and documents the release/versioning flow.
+
+## Layout (three buckets by concern)
+
+The root holds only entry points (`.entry`, `install.sh`, `Brewfile`) and docs.
+Everything else lives in exactly one bucket:
+
+| Bucket | What | How it's used |
+|--------|------|---------------|
+| `zsh/` | Shell config: `init/ vars/ aliases/ functions/ p10k/` | Sourced by `.entry`, in that order |
+| `tools/` | Rust/Cargo workspace (`aws-switch`, `feature`, …) | Compiled; `tools/bin` is put on `PATH` |
+| `system/` | External app/OS artifacts: `k9s/`, `macos/` | Symlinked into system locations by `install.sh` — **not** sourced, **not** compiled |
+
+Where new things go:
+- New alias → `zsh/aliases/<tool>.zsh`; new function → `zsh/functions/<name>.zsh` (never mix the two in one file).
+- Third-party `source` line (fzf, zoxide, direnv) → `zsh/init/`.
+- New Rust tool → `tools/crates/<tool>/` with a `[[bin]]` (CI + `install.sh` auto-discover it).
+- New external artifact → `system/<app>/`, then add a symlink step to `install.sh`.
+
+Gotchas: **don't move `tools/`** (CI, `Makefile`, and `~/.config/*` symlink sources
+assume it's at the root). `.entry` computes its base as `${0:A:h}/zsh`. `zsh/vars/path.zsh`
+climbs three levels (`zsh/vars/ → root`) to put `tools/bin` on `PATH` — move it and you
+must fix the `:h` count or the CLIs silently leave `PATH`.
 
 ## Releasing the Rust tools (`tools/`)
 

@@ -3,7 +3,7 @@
 #   - installs oh-my-zsh (~/.oh-my-zsh) if missing
 #   - clones powerlevel10k to ~/powerlevel10k if missing
 #   - brew bundle from ./Brewfile
-#   - symlinks k9s/views.yaml into ~/Library/Application Support/k9s/
+#   - symlinks system/k9s/views.yaml into ~/Library/Application Support/k9s/
 #   - ensures ~/.zshrc sources .entry
 
 set -euo pipefail
@@ -110,10 +110,10 @@ else
   echo "    linked $feat_target -> $feat_src"
 fi
 
-echo "==> linking k9s/views.yaml"
+echo "==> linking system/k9s/views.yaml"
 mkdir -p "$K9S_CFG"
 target="$K9S_CFG/views.yaml"
-src="$REPO_DIR/k9s/views.yaml"
+src="$REPO_DIR/system/k9s/views.yaml"
 if [[ -L "$target" ]]; then
   current="$(readlink "$target")"
   if [[ "$current" == "$src" ]]; then
@@ -133,7 +133,7 @@ fi
 
 echo "==> Cursor merge-windows LaunchAgent"
 AGENT_LABEL="com.itayka.cursor-merge-windows"
-AGENT_SRC="$REPO_DIR/macos/cursor-merge-windows/$AGENT_LABEL.plist"
+AGENT_SRC="$REPO_DIR/system/macos/cursor-merge-windows/$AGENT_LABEL.plist"
 AGENT_DIR="$HOME/Library/LaunchAgents"
 AGENT_DST="$AGENT_DIR/$AGENT_LABEL.plist"
 mkdir -p "$AGENT_DIR"
