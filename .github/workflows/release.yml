@@ -1,13 +1,14 @@
 name: release
 
-# Per-tool releases. Tag a tool as `<tool>-v<version>` (e.g. `feature-v0.1.0`,
-# `aws-switch-v0.2.0`) and this builds just that crate and publishes a release
-# for that tag. New tools need no workflow changes — the tool name is derived
-# from the tag and validated against tools/crates/<tool>.
+# One tag, one release, one standalone package per tool.
+# Push a `v<version>` tag (e.g. `v0.1.0`) and this builds every binary crate
+# under tools/crates/ and attaches each as its own <tool>-<target>.tar.gz asset
+# to a single GitHub Release. New tools are picked up automatically — no
+# workflow changes needed.
 on:
   push:
     tags:
-      - '*-v*'
+      - 'v*'
 
 permissions:
   contents: write          # needed to create the GitHub Release
@@ -18,35 +19,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve tool from tag
-        id: tool
-        run: |
-          tool="${GITHUB_REF_NAME%-v*}"
-          manifest="tools/crates/$tool/Cargo.toml"
-          if [ ! -f "$manifest" ] || ! grep -q '^\[\[bin\]\]' "$manifest"; then
-            echo "::error::tag '$GITHUB_REF_NAME' does not map to a binary crate (expected $manifest with a [[bin]])"
-            exit 1
-          fi
-          echo "name=$tool" >> "$GITHUB_OUTPUT"
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tools
 
-      - name: Build release binary
+      - name: Build & package all tools
         working-directory: tools
-        run: cargo build --release --locked -p "${{ steps.tool.outputs.name }}"
-
-      - name: Package
-        working-directory: tools/target/release
         run: |
-          tar -czf "$GITHUB_WORKSPACE/${{ steps.tool.outputs.name }}-aarch64-apple-darwin.tar.gz" \
-            "${{ steps.tool.outputs.name }}"
+          cargo build --release --locked
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist"
+          for manifest in crates/*/Cargo.toml; do
+            grep -q '^\[\[bin\]\]' "$manifest" || continue   # skip library crates (e.g. common)
+            tool="$(basename "$(dirname "$manifest")")"
+            tar -czf "$dist/$tool-aarch64-apple-darwin.tar.gz" -C target/release "$tool"
+            echo "packaged $tool"
+          done
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.tool.outputs.name }}-aarch64-apple-darwin.tar.gz
+          files: dist/*.tar.gz
           generate_release_notes: true

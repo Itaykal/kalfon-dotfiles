@@ -41,24 +41,20 @@ TOOLS_REPO="Itaykal/kalfon-dotfiles"
 TOOLS_DIR="$REPO_DIR/tools"
 TOOLS_BIN="$TOOLS_DIR/bin"
 TOOLS_PLATFORM="aarch64-apple-darwin"
-TOOLS_API="https://api.github.com/repos/$TOOLS_REPO/releases"
 
-# Download the latest per-tool release asset (newest <tool>-v* tag) into tools/bin/.
+# Download a tool's asset from the latest release into tools/bin/. All tools share
+# one release, so the auth-free releases/latest/download/<asset> URL is enough.
 install_prebuilt_tool() {
   local tool="$1"
   local asset="$tool-$TOOLS_PLATFORM.tar.gz"
-  local url
-  url="$(curl -fsSL "$TOOLS_API" \
-    | jq -r --arg p "$tool-v" --arg a "$asset" \
-        'map(select(.tag_name | startswith($p)))[0].assets[]? | select(.name == $a) | .browser_download_url')" || url=""
-  [[ -n "$url" ]] || return 1
+  local url="https://github.com/$TOOLS_REPO/releases/latest/download/$asset"
   local tmp; tmp="$(mktemp -d)"
   if curl -fsSL "$url" -o "$tmp/$asset"; then
     mkdir -p "$TOOLS_BIN"
     tar -xzf "$tmp/$asset" -C "$TOOLS_BIN"
     chmod +x "$TOOLS_BIN/$tool"
     rm -rf "$tmp"
-    echo "    installed $tool from its latest release"
+    echo "    installed $tool from the latest release"
     return 0
   fi
   rm -rf "$tmp"
