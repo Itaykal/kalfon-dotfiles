@@ -101,10 +101,14 @@ fn run() -> Result<u8> {
     let accounts = match cached {
         Some(accounts) => accounts,
         None => {
-            let fetched =
-                with_login_retry(&cfg, start_url, &mut token, "Loading accounts…", |t| {
-                    aws::list_accounts(t, &region)
-                })?;
+            let fetched = with_login_retry(
+                &cfg,
+                start_url,
+                &region,
+                &mut token,
+                "Loading accounts…",
+                |t| aws::list_accounts(t, &region),
+            )?;
             let _ = common::cache::store("aws-switch", &cache_key, &fetched);
             fetched
         }
@@ -126,7 +130,7 @@ fn run() -> Result<u8> {
         return Ok(1); // cancelled
     };
 
-    let roles = with_login_retry(&cfg, start_url, &mut token, "Loading roles…", |t| {
+    let roles = with_login_retry(&cfg, start_url, &region, &mut token, "Loading roles…", |t| {
         aws::list_roles(t, &region, &account.account_id)
     })?;
     let role = match select_role(&cfg, roles)? {
@@ -156,10 +160,11 @@ fn run() -> Result<u8> {
 }
 
 /// Run an SSO call behind a spinner, ensuring there's a token first and, if the
-/// token turns out to be expired (`Unauthorized`), logging in and retrying once.
+/// token turns out to be expired (`Unauthorized`), renewing it and retrying once.
 fn with_login_retry<T, F>(
     cfg: &Config,
     start_url: Option<&str>,
+    region: &str,
     token: &mut Option<String>,
     label: &str,
     call: F,
@@ -169,22 +174,40 @@ where
     F: Fn(&str) -> Result<T> + Sync,
 {
     if token.is_none() {
-        aws::login(&cfg.sso_session)?;
-        *token = aws::read_token(start_url)?;
+        refresh_or_login(cfg, start_url, region, token)?;
     }
     let t = token.clone().context("no SSO token available")?;
     match common::spinner::run(label, || call(&t)) {
         Err(e) if is_unauthorized(&e) => {
-            eprintln!("SSO session expired — logging in…");
-            aws::login(&cfg.sso_session)?;
-            *token = aws::read_token(start_url)?;
+            refresh_or_login(cfg, start_url, region, token)?;
             let t = token
                 .clone()
-                .context("could not read SSO token after login")?;
+                .context("could not read SSO token after renewal")?;
             common::spinner::run(label, || call(&t))
         }
         other => other,
     }
+}
+
+/// Renew the SSO token in `*token`. Prefer a silent refresh using the cached
+/// refresh token; only fall back to the browser flow `aws sso login` when no
+/// refresh is possible (no cached refresh token, or it has itself expired).
+fn refresh_or_login(
+    cfg: &Config,
+    start_url: Option<&str>,
+    region: &str,
+    token: &mut Option<String>,
+) -> Result<()> {
+    if let Some(rec) = aws::read_token_record(start_url)? {
+        if let Some(new) = aws::try_refresh(&rec, region)? {
+            *token = Some(new);
+            return Ok(());
+        }
+    }
+    eprintln!("SSO session expired — logging in…");
+    aws::login(&cfg.sso_session)?;
+    *token = aws::read_token(start_url)?;
+    Ok(())
 }
 
 fn is_unauthorized(e: &anyhow::Error) -> bool {

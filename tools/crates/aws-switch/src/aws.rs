@@ -2,14 +2,17 @@
 //!
 //! Account/role listing hits the SSO portal REST API directly over HTTPS using
 //! the cached bearer token — the same endpoints `aws sso list-accounts` calls,
-//! but without paying the ~400ms `aws` CLI (Python) startup on each one. Only
-//! `aws sso login` still shells out, since it drives the browser/device flow.
+//! but without paying the ~400ms `aws` CLI (Python) startup on each one. When a
+//! token expires we first try a silent refresh against the SSO-OIDC `/token`
+//! endpoint (the same `refresh_token` grant the AWS SDK uses), and only shell
+//! out to the browser/device flow `aws sso login` if that refresh fails.
 //! `~/.aws/config` is written in the AWS CLI's exact `key = value` / `[default]`
 //! format so both the real `aws` CLI and the pure-zsh `aws-sync-prompt` parser
 //! keep working.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -96,9 +99,26 @@ pub fn read_sso_session(session: &str) -> Result<(Option<String>, Option<String>
     Ok((region, start_url))
 }
 
-/// Return the cached SSO access token for `start_url` (or any session if
+/// A cached SSO token file (`~/.aws/sso/cache/*.json`), parsed into the fields
+/// we care about. Everything but `path`/`access_token`/`expires_at` is optional
+/// because client-registration files (which we skip) and older token formats
+/// may omit them; a refresh needs `refresh_token` + `client_id`/`client_secret`.
+pub struct CachedToken {
+    /// The cache file this came from, so a refresh can rewrite it in place.
+    pub path: PathBuf,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    /// SSO region recorded in the file, used to pick the OIDC endpoint.
+    pub region: Option<String>,
+    /// RFC3339 UTC; lexically comparable, so used to pick the freshest entry.
+    pub expires_at: String,
+}
+
+/// Return the cached SSO token record for `start_url` (or any session if
 /// `start_url` is `None`), choosing the one with the latest `expiresAt`.
-pub fn read_token(start_url: Option<&str>) -> Result<Option<String>> {
+pub fn read_token_record(start_url: Option<&str>) -> Result<Option<CachedToken>> {
     let dir = home()?.join(".aws/sso/cache");
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -106,7 +126,7 @@ pub fn read_token(start_url: Option<&str>) -> Result<Option<String>> {
         Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
     };
 
-    let mut best: Option<(String, String)> = None; // (expiresAt, accessToken)
+    let mut best: Option<CachedToken> = None;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -127,17 +147,33 @@ pub fn read_token(start_url: Option<&str>) -> Result<Option<String>> {
                 continue;
             }
         }
+        let str_field = |k: &str| {
+            value
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
         // expiresAt is RFC3339 UTC, so lexical comparison orders it correctly.
-        let expires = value
-            .get("expiresAt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if best.as_ref().is_none_or(|(e, _)| expires > *e) {
-            best = Some((expires, token.to_string()));
+        let expires = str_field("expiresAt").unwrap_or_default();
+        if best.as_ref().is_none_or(|b| expires > b.expires_at) {
+            best = Some(CachedToken {
+                path: path.clone(),
+                access_token: token.to_string(),
+                refresh_token: str_field("refreshToken"),
+                client_id: str_field("clientId"),
+                client_secret: str_field("clientSecret"),
+                region: str_field("region"),
+                expires_at: expires,
+            });
         }
     }
-    Ok(best.map(|(_, token)| token))
+    Ok(best)
+}
+
+/// Return just the cached SSO access token for `start_url`, choosing the one
+/// with the latest `expiresAt`. Thin wrapper over [`read_token_record`].
+pub fn read_token(start_url: Option<&str>) -> Result<Option<String>> {
+    Ok(read_token_record(start_url)?.map(|t| t.access_token))
 }
 
 /// `aws sso login --sso-session <session>`, inheriting the terminal so the
@@ -151,6 +187,95 @@ pub fn login(session: &str) -> Result<()> {
         bail!("`aws sso login` failed");
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct RefreshResponse {
+    #[serde(rename = "accessToken")]
+    access_token: String,
+    #[serde(rename = "expiresIn")]
+    expires_in: i64,
+    /// The refresh token may be rotated; if present we persist the new one.
+    #[serde(rename = "refreshToken", default)]
+    refresh_token: Option<String>,
+}
+
+/// Try to silently renew `rec`'s access token via the SSO-OIDC `refresh_token`
+/// grant — the same call the AWS SDK makes under the hood, so we never have to
+/// open the browser while the refresh token is still valid.
+///
+/// Returns `Ok(Some(new_token))` on success (and rewrites the cache file in
+/// place so the AWS CLI and future runs see it too). Returns `Ok(None)` when a
+/// refresh isn't possible or is rejected (missing refresh material, or the
+/// refresh token itself expired → HTTP 400 `invalid_grant`), signalling the
+/// caller to fall back to `aws sso login`. Only genuinely unexpected I/O errors
+/// propagate as `Err`.
+pub fn try_refresh(rec: &CachedToken, region: &str) -> Result<Option<String>> {
+    let (Some(refresh_token), Some(client_id), Some(client_secret)) =
+        (&rec.refresh_token, &rec.client_id, &rec.client_secret)
+    else {
+        return Ok(None);
+    };
+    let region = rec.region.as_deref().unwrap_or(region);
+    let url = format!("https://oidc.{region}.amazonaws.com/token");
+
+    let resp = match ureq::post(&url).send_json(serde_json::json!({
+        "clientId": client_id,
+        "clientSecret": client_secret,
+        "grantType": "refresh_token",
+        "refreshToken": refresh_token,
+    })) {
+        Ok(resp) => resp,
+        // Any refusal (expired/revoked refresh token, etc.) → fall back to login.
+        Err(ureq::Error::Status(_, _)) => return Ok(None),
+        Err(e) => return Err(anyhow::Error::new(e)).context("SSO-OIDC refresh request"),
+    };
+    let refreshed: RefreshResponse = resp
+        .into_json()
+        .context("parsing SSO-OIDC refresh response")?;
+
+    // Persist the new token so the AWS CLI and our next run benefit. A wrong
+    // expiresAt is self-correcting (a 401 just triggers another refresh), so a
+    // failure to rewrite the cache is non-fatal — we still return the token.
+    let new_refresh = refreshed.refresh_token.as_deref();
+    let expires_at = unix_to_rfc3339(now_secs() + refreshed.expires_in);
+    if let Ok(original) = std::fs::read_to_string(&rec.path) {
+        let updated =
+            update_token_json(&original, &refreshed.access_token, &expires_at, new_refresh);
+        let _ = write_atomic(&rec.path, &updated);
+    }
+
+    Ok(Some(refreshed.access_token))
+}
+
+/// Seconds since the Unix epoch (same clock source as `common::cache`).
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Format Unix `secs` as `YYYY-MM-DDTHH:MM:SSZ` (the RFC3339 UTC form the AWS
+/// CLI writes for `expiresAt`), using the civil-from-days algorithm so we need
+/// no date crate.
+fn unix_to_rfc3339(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (hour, min, sec) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+
+    // Howard Hinnant's civil_from_days: days since 1970-01-01 → (y, m, d).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = yoe + era * 400 + i64::from(month <= 2);
+
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
 
 /// The SSO portal endpoint for a region (the host the AWS CLI talks to under
@@ -328,9 +453,70 @@ fn line_key(line: &str) -> Option<&str> {
     line.split_once('=').map(|(k, _)| k.trim())
 }
 
+/// Pure core of the cache rewrite in [`try_refresh`]: return `original` (an SSO
+/// token cache JSON object) with `accessToken` and `expiresAt` replaced and
+/// `refreshToken` set when `refresh` is `Some`, preserving every other key. If
+/// `original` isn't a JSON object it's returned unchanged.
+fn update_token_json(
+    original: &str,
+    access_token: &str,
+    expires_at: &str,
+    refresh: Option<&str>,
+) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(original) else {
+        return original.to_string();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return original.to_string();
+    };
+    obj.insert("accessToken".into(), access_token.into());
+    obj.insert("expiresAt".into(), expires_at.into());
+    if let Some(refresh) = refresh {
+        obj.insert("refreshToken".into(), refresh.into());
+    }
+    serde_json::to_string(&value).unwrap_or_else(|_| original.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{update_ini, write_atomic};
+    use super::{unix_to_rfc3339, update_ini, update_token_json, write_atomic};
+
+    #[test]
+    fn unix_to_rfc3339_formats_known_timestamps() {
+        // 2026-06-21T08:52:26Z — the format AWS writes for `expiresAt`.
+        assert_eq!(unix_to_rfc3339(1_782_031_946), "2026-06-21T08:52:26Z");
+        // Epoch and a leap-day boundary to exercise the civil-date math.
+        assert_eq!(unix_to_rfc3339(0), "1970-01-01T00:00:00Z");
+        assert_eq!(unix_to_rfc3339(1_583_020_800), "2020-03-01T00:00:00Z");
+    }
+
+    #[test]
+    fn update_token_json_replaces_fields_and_preserves_others() {
+        let original = r#"{"startUrl":"https://x/start","region":"eu-west-1","accessToken":"OLD","expiresAt":"2020-01-01T00:00:00Z","refreshToken":"OLDR","clientId":"cid"}"#;
+        let out = update_token_json(original, "NEW", "2026-06-21T08:52:26Z", Some("NEWR"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["accessToken"], "NEW");
+        assert_eq!(v["expiresAt"], "2026-06-21T08:52:26Z");
+        assert_eq!(v["refreshToken"], "NEWR");
+        // Untouched keys survive.
+        assert_eq!(v["startUrl"], "https://x/start");
+        assert_eq!(v["region"], "eu-west-1");
+        assert_eq!(v["clientId"], "cid");
+    }
+
+    #[test]
+    fn update_token_json_keeps_old_refresh_when_none() {
+        let original = r#"{"accessToken":"OLD","expiresAt":"2020-01-01T00:00:00Z","refreshToken":"KEEP"}"#;
+        let out = update_token_json(original, "NEW", "2026-06-21T08:52:26Z", None);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["accessToken"], "NEW");
+        assert_eq!(v["refreshToken"], "KEEP");
+    }
+
+    #[test]
+    fn update_token_json_passes_through_non_object() {
+        assert_eq!(update_token_json("not json", "N", "E", None), "not json");
+    }
 
     #[test]
     fn write_atomic_creates_overwrites_and_leaves_no_temp() {
