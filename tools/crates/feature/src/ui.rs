@@ -88,8 +88,8 @@ pub fn run(
 
 fn viewport_height() -> u16 {
     let rows = crossterm::terminal::size().map(|(_, r)| r).unwrap_or(24);
-    let want = (rows as f32 * 0.6) as u16;
-    want.clamp(16.min(rows), rows.max(8))
+    let want = (rows as f32 * 0.4) as u16;
+    want.clamp(12.min(rows), rows.max(8))
 }
 
 struct App {
@@ -99,6 +99,8 @@ struct App {
     matcher: Matcher,
     issues: Vec<Issue>,
     query: String,
+    /// Cursor position within `query`, as a char index in `0..=query char count`.
+    cursor: usize,
     rows: Vec<RowMatch>,
     selected: usize,
     list_state: ListState,
@@ -138,6 +140,7 @@ impl App {
             matcher: Matcher::new(NucleoConfig::DEFAULT),
             issues,
             query: String::new(),
+            cursor: 0,
             rows: Vec::new(),
             selected: 0,
             list_state: ListState::default(),
@@ -328,9 +331,51 @@ impl App {
         self.status.clear();
     }
 
+    /// Byte offset into `query` for the current `cursor` char index.
+    fn cursor_byte(&self) -> usize {
+        self.query
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.query.len())
+    }
+
+    /// Delete the whole word to the left of the cursor (opt/alt-backspace,
+    /// ctrl-w): skip any whitespace, then the run of non-whitespace.
+    fn delete_word_back(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut chars: Vec<char> = self.query.chars().collect();
+        let mut i = self.cursor;
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 && !chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        chars.drain(i..self.cursor);
+        self.query = chars.into_iter().collect();
+        self.cursor = i;
+        self.on_query_change();
+    }
+
+    /// Delete everything from the start of the line to the cursor (cmd-backspace).
+    fn delete_to_start(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut chars: Vec<char> = self.query.chars().collect();
+        chars.drain(0..self.cursor);
+        self.query = chars.into_iter().collect();
+        self.cursor = 0;
+        self.on_query_change();
+    }
+
     fn handle_key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         let alt = k.modifiers.contains(KeyModifiers::ALT);
+        let sup = k.modifiers.contains(KeyModifiers::SUPER);
 
         // While a create is in flight, swallow everything but a hard quit.
         if self.creating {
@@ -376,13 +421,39 @@ impl App {
             KeyCode::Char('b') if ctrl => {
                 self.preview_scroll = self.preview_scroll.saturating_sub(16)
             }
+            KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
+            KeyCode::Right => {
+                self.cursor = (self.cursor + 1).min(self.query.chars().count())
+            }
+            KeyCode::Home => self.cursor = 0,
+            KeyCode::Char('a') if ctrl => self.cursor = 0,
+            KeyCode::End => self.cursor = self.query.chars().count(),
+            KeyCode::Char('e') if ctrl => self.cursor = self.query.chars().count(),
+            // cmd-backspace: delete to start of line.
+            KeyCode::Backspace if sup => self.delete_to_start(),
+            // opt/alt-backspace and ctrl-w: delete previous word.
+            KeyCode::Backspace if alt => self.delete_word_back(),
+            KeyCode::Char('w') if ctrl => self.delete_word_back(),
             KeyCode::Backspace => {
-                self.query.pop();
-                self.on_query_change();
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                    let b = self.cursor_byte();
+                    self.query.remove(b);
+                    self.on_query_change();
+                }
+            }
+            KeyCode::Delete => {
+                if self.cursor < self.query.chars().count() {
+                    let b = self.cursor_byte();
+                    self.query.remove(b);
+                    self.on_query_change();
+                }
             }
             KeyCode::Char('?') if self.query.is_empty() => self.help = !self.help,
             KeyCode::Char(c) if !ctrl && !alt => {
-                self.query.push(c);
+                let b = self.cursor_byte();
+                self.query.insert(b, c);
+                self.cursor += 1;
                 self.help = false;
                 self.on_query_change();
             }
@@ -430,7 +501,7 @@ impl App {
         ]);
         f.render_widget(Paragraph::new(qline), query_area);
         f.set_cursor_position(Position::new(
-            query_area.x + 2 + self.query.chars().count() as u16,
+            query_area.x + 2 + self.cursor as u16,
             query_area.y,
         ));
 
@@ -465,7 +536,7 @@ impl App {
         }
     }
 
-    fn render_right(&self, f: &mut Frame, area: Rect) {
+    fn render_right(&mut self, f: &mut Frame, area: Rect) {
         let label = if self.help { " help " } else { " issue " };
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -491,10 +562,26 @@ impl App {
                 None => Text::from(Line::styled("no matching issues", theme::muted())),
             }
         };
+        let total = wrapped_height(&text, body.width);
+        // Clamp scroll so it can't run past the end into blank space.
+        let max_scroll = total.saturating_sub(body.height as usize) as u16;
+        self.preview_scroll = self.preview_scroll.min(max_scroll);
         let para = Paragraph::new(text)
             .wrap(Wrap { trim: false })
             .scroll((self.preview_scroll, 0));
         f.render_widget(para, body);
+
+        // Same subtle scroll thumb as the list, when the preview overflows.
+        if total > body.height as usize {
+            let mut sb = ScrollbarState::new(total).position(self.preview_scroll as usize);
+            let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(theme::muted());
+            f.render_stateful_widget(bar, body, &mut sb);
+        }
 
         if !self.help {
             if let Some(iss) = self.current_issue() {
@@ -536,6 +623,24 @@ impl App {
         };
         f.render_widget(Paragraph::new(line), area);
     }
+}
+
+/// Approximate the number of visual rows `text` occupies once wrapped to
+/// `width`. Used only to drive the preview scroll thumb, so a char-width
+/// estimate (rather than exact word-wrap) is good enough.
+fn wrapped_height(text: &Text, width: u16) -> usize {
+    let w = width as usize;
+    if w == 0 {
+        return text.lines.len().max(1);
+    }
+    text.lines
+        .iter()
+        .map(|line| {
+            let lw = line.width();
+            if lw == 0 { 1 } else { lw.div_ceil(w) }
+        })
+        .sum::<usize>()
+        .max(1)
 }
 
 /// One issue row: marker, branch indicator, type, key, highlighted summary, status.
