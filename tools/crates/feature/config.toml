@@ -3,5 +3,9 @@
 # current jira user, no custom fields); this file re-adds my team's squad field.
 # Anything omitted falls back to the built-in defaults — see feature.example.toml.
 
+# Worktrees (ctrl-enter) go under this root, grouped by repo:
+# ~/dev/worktrees/<repo>/<branch>.
+worktree_dir = "~/dev/worktrees"
+
 [create.custom]
 squad = "Detection"

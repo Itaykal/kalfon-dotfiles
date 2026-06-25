@@ -94,13 +94,16 @@ fn run() -> Result<u8> {
         move |req: CreateRequest| t.create(&req)
     };
 
-    // Mark issues that already have a local branch (best-effort).
+    // Mark issues that already have a local branch / a separate worktree
+    // (best-effort). A worktree means Enter jumps into it instead of branching.
     let branches = vcs::local_branches().unwrap_or_default();
+    let worktrees = vcs::worktreed_branches().unwrap_or_default();
 
     match ui::run(
         aliases,
         items,
         branches,
+        worktrees,
         refresh_job,
         describe,
         create,

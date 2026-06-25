@@ -1,0 +1,15 @@
+# wt-gc — in-repo config. install.sh symlinks this to ~/.config/wt-gc/config.toml.
+# Every key is optional; omitted keys fall back to the defaults shown here.
+
+# Dirs whose immediate children are scanned for git repos (a child with a .git
+# directory). Covers both the flat dev/ repos and the new dev/repos. "~/" expands.
+repo_roots = ["~/dev", "~/dev/repos"]
+
+# Where reclaimed worktrees are moved — a recoverable grace area before deletion.
+trash_dir = "~/dev/.worktree-trash"
+
+# A worktree is "stale" after this many days with no new commit.
+stale_days = 30
+
+# Trashed worktrees are deleted for good after this many days in the trash.
+trash_retention_days = 7

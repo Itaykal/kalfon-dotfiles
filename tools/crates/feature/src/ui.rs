@@ -58,6 +58,7 @@ pub fn run(
     aliases: BTreeMap<String, String>,
     items: Vec<Issue>,
     branches: HashSet<String>,
+    worktrees: HashSet<String>,
     refresh_job: impl Fn() -> Result<Vec<Issue>> + Send + Sync + 'static,
     describe: impl Fn(String) -> Result<String> + Send + Sync + 'static,
     create: impl Fn(CreateRequest) -> Result<String> + Send + Sync + 'static,
@@ -67,6 +68,7 @@ pub fn run(
         aliases,
         items,
         branches,
+        worktrees,
         Refresh::new(refresh_job),
         Arc::new(describe),
         Arc::new(create),
@@ -148,6 +150,8 @@ struct App {
     aliases: BTreeMap<String, String>,
     /// Local branch names, for marking issues that already have a branch.
     branches: HashSet<String>,
+    /// Branches that have a separate worktree — Enter jumps into it.
+    worktrees: HashSet<String>,
     matcher: Matcher,
     issues: Vec<Issue>,
     query: String,
@@ -190,6 +194,7 @@ impl App {
         aliases: BTreeMap<String, String>,
         issues: Vec<Issue>,
         branches: HashSet<String>,
+        worktrees: HashSet<String>,
         refresh: Refresh<Vec<Issue>>,
         describe: DescribeFn,
         create_fn: CreateFn,
@@ -197,6 +202,7 @@ impl App {
         let mut app = App {
             aliases,
             branches,
+            worktrees,
             matcher: Matcher::new(NucleoConfig::DEFAULT),
             issues,
             query: String::new(),
@@ -504,19 +510,23 @@ impl App {
                 }
             }
             KeyCode::Char('c') if ctrl => self.done = true,
-            // enter branches in place; ctrl-enter spins out a worktree (the
-            // latter needs a terminal that supports the keyboard-enhancement
-            // protocol, otherwise it arrives as a plain enter — see term.rs).
+            // enter is context-aware: jump into the task's worktree if one
+            // exists, otherwise branch in place. ctrl-enter always means
+            // worktree (create, or jump to an existing one). ctrl-enter needs a
+            // terminal supporting the keyboard-enhancement protocol, else it
+            // arrives as a plain enter — see term.rs.
             KeyCode::Enter => {
                 if let Some(iss) = self.current_issue() {
+                    let branch = crate::vcs::branch(&iss.key, &iss.summary);
+                    let action = if ctrl || self.worktrees.contains(&branch) {
+                        Action::Worktree
+                    } else {
+                        Action::Branch
+                    };
                     self.result = Outcome::Selected {
                         key: iss.key.clone(),
                         summary: iss.summary.clone(),
-                        action: if ctrl {
-                            Action::Worktree
-                        } else {
-                            Action::Branch
-                        },
+                        action,
                     };
                     self.done = true;
                 }
@@ -697,10 +707,17 @@ impl App {
             .enumerate()
             .map(|(i, row)| {
                 let iss = &self.issues[row.issue_idx];
-                let has_branch = self
-                    .branches
-                    .contains(&crate::vcs::branch(&iss.key, &iss.summary));
-                row_item(i == self.selected, iss, &row.sum_matched, has_branch, width)
+                let branch = crate::vcs::branch(&iss.key, &iss.summary);
+                let has_branch = self.branches.contains(&branch);
+                let has_worktree = self.worktrees.contains(&branch);
+                row_item(
+                    i == self.selected,
+                    iss,
+                    &row.sum_matched,
+                    has_branch,
+                    has_worktree,
+                    width,
+                )
             })
             .collect();
         self.list_state.select(Some(self.selected));
@@ -796,7 +813,7 @@ impl App {
                 Span::styled(" ↑↓", theme::key()),
                 Span::styled(" move  ", theme::footer()),
                 Span::styled("⏎", theme::key()),
-                Span::styled(" branch  ", theme::footer()),
+                Span::styled(" open/branch  ", theme::footer()),
                 Span::styled("^⏎", theme::key()),
                 Span::styled(" worktree  ", theme::footer()),
                 Span::styled("^n", theme::key()),
@@ -833,12 +850,14 @@ fn wrapped_height(text: &Text, width: u16) -> usize {
         .max(1)
 }
 
-/// One issue row: marker, branch indicator, type, key, highlighted summary, status.
+/// One issue row: marker, branch/worktree indicator, type, key, highlighted
+/// summary, status.
 fn row_item(
     selected: bool,
     iss: &Issue,
     matched: &[usize],
     has_branch: bool,
+    has_worktree: bool,
     width: usize,
 ) -> ListItem<'static> {
     let mut spans = vec![if selected {
@@ -846,8 +865,11 @@ fn row_item(
     } else {
         Span::raw("  ")
     }];
-    // A branch glyph marks issues that already have a local branch (not "fresh").
-    spans.push(if has_branch {
+    // ⧉ marks issues you can jump into (a separate worktree); ⎇ marks ones with
+    // only a local branch. Worktree wins, and gets the accent to stand out.
+    spans.push(if has_worktree {
+        Span::styled("⧉ ", theme::key())
+    } else if has_branch {
         Span::styled("⎇ ", theme::muted())
     } else {
         Span::raw("  ")
@@ -934,8 +956,8 @@ fn help_text() -> Text<'static> {
         Line::styled("navigate", theme::title()),
         kv("↑ / ctrl-k", "up"),
         kv("↓ / ctrl-j", "down"),
-        kv("enter", "branch from issue"),
-        kv("ctrl-enter", "worktree from issue"),
+        kv("enter", "open worktree if one exists, else branch"),
+        kv("ctrl-enter", "worktree from issue (create or jump)"),
         kv("ctrl-n", "create issue (then pick worktree/branch)"),
         kv("ctrl-r", "refresh list"),
         kv("esc / ctrl-c", "quit"),
@@ -949,6 +971,10 @@ fn help_text() -> Text<'static> {
         kv("/t /task", "Task"),
         kv("/s /story", "Story"),
         kv("/st /sub", "Sub-task"),
+        Line::from(""),
+        Line::styled("markers", theme::title()),
+        kv("⧉", "has a worktree (enter jumps in)"),
+        kv("⎇", "has a local branch"),
         Line::from(""),
         kv("?", "toggle this help"),
     ])

@@ -110,6 +110,24 @@ else
   echo "    linked $feat_target -> $feat_src"
 fi
 
+echo "==> linking wt-gc config"
+WTGC_CFG_DIR="$HOME/.config/wt-gc"
+mkdir -p "$WTGC_CFG_DIR"
+wtgc_target="$WTGC_CFG_DIR/config.toml"
+wtgc_src="$REPO_DIR/tools/crates/wt-gc/config.toml"
+if [[ -L "$wtgc_target" && "$(readlink "$wtgc_target")" == "$wtgc_src" ]]; then
+  echo "    already linked"
+elif [[ -e "$wtgc_target" ]]; then
+  echo "    existing $wtgc_target found, leaving it in place"
+else
+  ln -s "$wtgc_src" "$wtgc_target"
+  echo "    linked $wtgc_target -> $wtgc_src"
+fi
+
+echo "==> dev/ layout (repos + worktrees)"
+mkdir -p "$HOME/dev/repos" "$HOME/dev/worktrees"
+echo "    ensured ~/dev/repos and ~/dev/worktrees"
+
 echo "==> linking system/k9s/views.yaml"
 mkdir -p "$K9S_CFG"
 target="$K9S_CFG/views.yaml"

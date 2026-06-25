@@ -7,7 +7,7 @@
 #   make clippy  cargo clippy with warnings denied
 
 # Binary crates that produce a CLI on PATH. Add new tools here.
-TOOLS := aws-switch feature
+TOOLS := aws-switch feature wt-gc
 
 BIN_DIR := $(abspath bin)
 

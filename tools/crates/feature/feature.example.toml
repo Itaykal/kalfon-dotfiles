@@ -12,8 +12,10 @@ jira_bin = "jira"
 # force-refreshes anytime. 0 disables caching.
 cache_ttl_secs = 60
 
-# Where ctrl-enter creates worktrees. A leading "~/" is expanded. Empty (the
-# default) puts them in a sibling of the repo: <repo>/../<repo-name>-worktrees.
+# Where ctrl-enter creates worktrees. A leading "~/" is expanded. When set, it's
+# a shared root and worktrees are grouped by repo: <worktree_dir>/<repo>/<branch>
+# (e.g. ~/dev/worktrees/myrepo/DRM-1-fix). Empty (the default) puts them in a
+# sibling of the repo instead: <repo>/../<repo-name>-worktrees/<branch>.
 worktree_dir = ""
 
 [list]

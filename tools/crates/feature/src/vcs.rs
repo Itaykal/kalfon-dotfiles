@@ -83,22 +83,28 @@ pub fn worktree_add(branch: &str, base_dir: Option<&str>) -> Result<PathBuf> {
 }
 
 /// The directory worktrees are created under. A non-empty `base_dir` (from
-/// config) wins, with a leading `~/` expanded; otherwise default to a sibling of
-/// the repo: `<repo>/../<repo-name>-worktrees`.
+/// config) is treated as a root and grouped by repo — `<base_dir>/<repo-name>`,
+/// with a leading `~/` expanded — so a shared root like `~/dev/worktrees` keeps
+/// each repo's worktrees together. Empty falls back to a sibling of the repo:
+/// `<repo>/../<repo-name>-worktrees`.
 fn worktree_base(base_dir: Option<&str>) -> Result<PathBuf> {
-    if let Some(dir) = base_dir.filter(|d| !d.is_empty()) {
-        return Ok(expand_tilde(dir));
-    }
-    let top = repo_toplevel()?;
+    Ok(worktree_base_for(base_dir, &repo_toplevel()?))
+}
+
+/// Pure path composition for [`worktree_base`] given the repo `top`level.
+fn worktree_base_for(base_dir: Option<&str>, top: &Path) -> PathBuf {
     let name = top
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "repo".into());
+    if let Some(dir) = base_dir.filter(|d| !d.is_empty()) {
+        return expand_tilde(dir).join(name);
+    }
     let parent = top
         .parent()
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| top.clone());
-    Ok(parent.join(format!("{name}-worktrees")))
+        .unwrap_or_else(|| top.to_path_buf());
+    parent.join(format!("{name}-worktrees"))
 }
 
 /// Expand a leading `~/` to `$HOME`; leave everything else untouched.
@@ -166,6 +172,41 @@ pub fn local_branches() -> Result<HashSet<String>> {
         .collect())
 }
 
+/// Branch names that have a *separate* (linked) worktree, for marking issues you
+/// can jump straight into. Excludes the main worktree (so the current branch
+/// isn't flagged). Returns an empty set outside a git repo.
+pub fn worktreed_branches() -> Result<HashSet<String>> {
+    let main = repo_toplevel()?;
+    let out = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .context("listing worktrees")?;
+    if !out.status.success() {
+        return Ok(HashSet::new());
+    }
+    Ok(parse_worktreed_branches(
+        &String::from_utf8_lossy(&out.stdout),
+        &main,
+    ))
+}
+
+/// Parse `git worktree list --porcelain`, collecting the branch of every linked
+/// worktree except the one living at `main` (the primary working tree).
+fn parse_worktreed_branches(porcelain: &str, main: &Path) -> HashSet<String> {
+    let mut set = HashSet::new();
+    let mut is_main = false;
+    for line in porcelain.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            is_main = Path::new(p) == main;
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            if !is_main {
+                set.insert(b.to_string());
+            }
+        }
+    }
+    set
+}
+
 /// Whether a local branch named `branch` already exists.
 fn branch_exists(branch: &str) -> Result<bool> {
     let status = Command::new("git")
@@ -205,15 +246,51 @@ mod tests {
     }
 
     #[test]
-    fn worktree_base_uses_explicit_dir() {
+    fn worktree_base_groups_by_repo_under_root() {
+        let top = PathBuf::from("/Users/me/dev/repos/myrepo");
         assert_eq!(
-            worktree_base(Some("/tmp/wt")).unwrap(),
-            PathBuf::from("/tmp/wt")
+            worktree_base_for(Some("/wt"), &top),
+            PathBuf::from("/wt/myrepo")
+        );
+    }
+
+    #[test]
+    fn worktree_base_defaults_to_sibling() {
+        let top = PathBuf::from("/Users/me/dev/repos/myrepo");
+        assert_eq!(
+            worktree_base_for(None, &top),
+            PathBuf::from("/Users/me/dev/repos/myrepo-worktrees")
         );
     }
 
     #[test]
     fn expand_tilde_passthrough() {
         assert_eq!(expand_tilde("/abs/path"), PathBuf::from("/abs/path"));
+    }
+
+    #[test]
+    fn worktreed_branches_excludes_main() {
+        let porcelain = "\
+worktree /Users/me/dev/repo
+HEAD aaaa
+branch refs/heads/main
+
+worktree /Users/me/dev/worktrees/repo/DRM-1-foo
+HEAD bbbb
+branch refs/heads/DRM-1-foo
+
+worktree /Users/me/dev/worktrees/repo/DRM-2-bar
+HEAD cccc
+branch refs/heads/DRM-2-bar
+
+worktree /Users/me/dev/detached-wt
+HEAD dddd
+detached
+";
+        let set = parse_worktreed_branches(porcelain, Path::new("/Users/me/dev/repo"));
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("DRM-1-foo"));
+        assert!(set.contains("DRM-2-bar"));
+        assert!(!set.contains("main")); // the primary working tree is excluded
     }
 }
