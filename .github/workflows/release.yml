@@ -2,7 +2,7 @@ name: release
 
 # One tag, one release, one standalone package per tool.
 # Push a `v<version>` tag (e.g. `v0.1.0`) and this builds every binary crate
-# under tools/crates/ and attaches each as its own <tool>-<target>.tar.gz asset
+# under crates/ and attaches each as its own <tool>-<target>.tar.gz asset
 # to a single GitHub Release. New tools are picked up automatically — no
 # workflow changes needed.
 on:
@@ -22,11 +22,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: tools
 
       - name: Build & package all tools
-        working-directory: tools
         run: |
           cargo build --release --locked
           dist="$GITHUB_WORKSPACE/dist"

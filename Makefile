@@ -1,12 +1,12 @@
-# Build the Rust dotfiles tools and link the binaries into tools/bin (on PATH).
+# Build the Rust dev-tools and link the binaries into bin/ (for local use).
 #
-#   make build   release build, link into bin/   (used by install.sh)
+#   make build   release build, link into bin/
 #   make dev     fast debug build, linked into bin/ (the dev loop)
 #   make test    cargo test across the workspace
 #   make fmt     cargo fmt
 #   make clippy  cargo clippy with warnings denied
 
-# Binary crates that produce a CLI on PATH. Add new tools here.
+# Binary crates that produce a CLI. Add new tools here.
 TOOLS := aws-switch feature wt-gc
 
 BIN_DIR := $(abspath bin)

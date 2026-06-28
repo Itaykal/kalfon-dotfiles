@@ -1,7 +1,0 @@
-_dotfiles="${0:A:h}/zsh"
-for _dir in init vars aliases functions p10k; do
-  for _file in "$_dotfiles/$_dir"/*.zsh(N); do
-    source "$_file"
-  done
-done
-unset _dotfiles _dir _file

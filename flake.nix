@@ -1,5 +1,5 @@
 {
-  description = "kalfon-dotfiles — standalone Rust CLIs (aws-switch, feature, wt-gc)";
+  description = "dev-tools — standalone Rust CLIs (aws-switch, feature, wt-gc)";
 
   # Pinned to match the consumer flake (itaykal/nixos-config), which follows
   # nixpkgs nixos-26.05. Keep these in sync when bumping channels.
@@ -31,16 +31,16 @@
         };
       in
       {
-        # One derivation builds the whole `tools/` workspace and installs every
+        # One derivation builds the whole Cargo workspace and installs every
         # `[[bin]]` crate (aws-switch, feature, wt-gc). The `common` library has
         # no bin, so buildRustPackage leaves it out of the install step.
         packages.dev-tools = rustPlatform.buildRustPackage {
-          pname = "kalfon-dev-tools";
+          pname = "dev-tools";
           version = "0.2.0";
 
-          # The Cargo workspace lives under tools/, not the repo root.
-          src = ./tools;
-          cargoLock.lockFile = ./tools/Cargo.lock;
+          # The Cargo workspace is the repo root.
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
 
           # ureq builds against rustls (no OpenSSL/Security needed). libiconv
           # covers the darwin link step.

@@ -1,67 +1,84 @@
-# kalfon-dotfiles
+# dev-tools
 
-Personal zsh dotfiles repo. All shell customisations live here — never edit `~/.p10k.zsh`, `~/.zshrc` aliases, or similar files directly.
+Personal terminal CLIs in Rust. This repo is a **single Cargo workspace** exposed
+as a Nix flake. It used to also hold zsh dotfiles and macOS/system artifacts —
+those moved to `Itaykal/nixos-config` (nix-darwin + Home Manager); this repo is
+now just the Rust tools.
 
 ## Structure
 
-The root holds only entry points (`.entry`, `install.sh`, `Brewfile`) and docs. Everything else lives in one of three buckets **by concern**: `zsh/` (sourced into the shell), `tools/` (compiled Rust CLIs), `system/` (artifacts symlinked into external locations).
-
 ```
-.entry              # dynamic loader — sources all *.zsh from each zsh/ dir in order
-install.sh          # installer — symlinks, brew bundle, tool install, .zshrc wiring
-Brewfile            # brew bundle manifest
-
-zsh/                # everything .entry sources into the shell (load order below)
-  init/             # initialization scripts that must run first (third-party integrations: fzf, zoxide, direnv, …)
-  vars/             # exported env vars (incl. path.zsh — puts tools/bin on PATH)
-  aliases/          # aliases only, one file per tool (no functions)
-  functions/        # shell functions, one file per function
-  p10k/             # Powerlevel10k overrides (files are numbered for load order)
-
-tools/              # Rust/Cargo workspace — compiled CLIs (aws-switch, feature, …) on PATH via tools/bin
-                    #   stays at the root: moving it would churn Cargo, Makefile, CI, and config symlinks
-
-system/             # external app/OS artifacts symlinked out by install.sh — NOT sourced, NOT compiled
-  k9s/              # k9s config (views.yaml, …) — symlinked into ~/Library/Application Support/k9s/
-  macos/            # macOS-only artifacts (LaunchAgents, AppleScripts)
+Cargo.toml          workspace + shared dependency versions
+rust-toolchain.toml stable channel + rustfmt/clippy components
+Makefile            build / dev / test / fmt / clippy
+flake.nix           Nix flake; packages.<system>.dev-tools builds all binaries
+crates/
+  common/           shared lib: theme, fuzzy picker, config + cache loaders,
+                    term guard, spinner  (no [[bin]])
+  aws-switch/        [[bin]] — AWS SSO account+role picker → ~/.aws/config
+  feature/           [[bin]] — Jira issue picker/creator → git checkout -b
+  wt-gc/             [[bin]] — stale git-worktree GC
 ```
+
+- MSRV `rust-version = "1.96"`, edition 2021. Release profile is size-tuned
+  (`opt-level = "z"`, `lto`, `strip`, `codegen-units = 1`).
+- Shared dep versions live in `[workspace.dependencies]`; crates pull them in with
+  `dep.workspace = true`.
 
 ## Rules
 
-- **All changes go in this repo.** Never patch `~/.p10k.zsh` or `~/.zshrc` directly.
-- The three buckets are strict: shell config goes under `zsh/`, the Rust workspace stays under `tools/`, external app/OS artifacts go under `system/`. Don't put shell `*.zsh` outside `zsh/`, and don't move `tools/` (CI, `Makefile`, and `~/.config/*` symlink sources all assume it sits at the root).
-- New aliases → new file `zsh/aliases/<tool>.zsh`. New functions → new file `zsh/functions/<name>.zsh`.
-- Aliases and functions must not be mixed in the same file.
-- `zsh/init/` is for anything that must run before the rest of the dotfiles load — typically `source` lines for third-party shell integrations (fzf key-bindings, zoxide, direnv hooks). Never put those `source` lines in `zsh/aliases/` or `zsh/functions/`.
-- `.entry` lives at the root, computes `${0:A:h}/zsh` as its base, and dynamically sources `*.zsh` from each category dir in order: `init → vars → aliases → functions → p10k`.
-- `zsh/vars/path.zsh` derives the repo root from its own location (`%x` then climb three levels: `zsh/vars/ → root`) to put `tools/bin` on PATH. If you move the file deeper/shallower, fix the `:h` count.
-- `zsh/p10k/` files are numbered (`1-`, `2-`, …) because load order matters: kubernetes layout must be set before the AWS block inserts relative to it.
-- `.p10k` overrides are sourced after `~/.p10k.zsh`, so they win. Use array manipulation to reorder prompt elements rather than redefining the full array.
-- The AWS SSO session is always named `session`. The active profile is always `default`. Do not introduce new profile names.
-- `AWS_ACCOUNT_NAME`, `AWS_ACCOUNT_ID`, `AWS_ROLE_NAME`, `AWS_DEFAULT_REGION` are exported by `aws-switch` and referenced in the p10k content expansion — keep them in sync if either side changes.
-- `jq` and `fzf` are assumed to be installed. Do not add fallbacks for them.
-- `system/` holds external app/OS artifacts. Nothing in it is sourced by `.entry` (it's not shell) or compiled (it's not Rust); `install.sh` symlinks each artifact into its system location.
-- `system/k9s/` is symlinked into `~/Library/Application Support/k9s/` (e.g. `views.yaml`). Edit only via this repo. Bad column expressions in `views.yaml` fail silently in the UI — check `~/Library/Application Support/k9s/k9s.log` after changes.
-- `system/macos/` — each subdir is a self-contained macOS artifact. `install.sh` symlinks LaunchAgent plists into `~/Library/LaunchAgents/` and (re)bootstraps them via `launchctl bootstrap gui/$(id -u)`. Agents that drive UI via System Events need Accessibility permission granted to `/usr/bin/osascript` — macOS will prompt on first run.
+- **New tool** → add a binary crate under `crates/<tool>/` with a `[[bin]]`. The
+  release CI loop, the flake, and the Makefile `TOOLS` list pick up binary crates;
+  list crates with no `[[bin]]` (like `common`) are skipped by CI/flake but still
+  need to be added to the workspace `members` and `Makefile TOOLS` as appropriate.
+- **Shared code** goes in `crates/common/`, consumed via the workspace dependency.
+- Run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` before committing
+  (CI builds with `--locked`, so keep `Cargo.lock` committed and current).
 
-## Releasing the Rust tools (`tools/`)
+## Nix flake + the consumer
 
-The Rust CLIs under `tools/` (`feature`, `aws-switch`, …) ship from **one tag → one release**, but each tool is a **standalone package** (its own tarball asset). One version covers all tools.
+- `flake.nix` builds one derivation, `packages.<system>.dev-tools`, that installs
+  every `[[bin]]` crate. `src = ./.` and `cargoLock.lockFile = ./Cargo.lock` point
+  at the repo root (the workspace). Supported systems: `aarch64-darwin`,
+  `x86_64-linux`.
+- The toolchain is pinned via `rust-overlay` (`rust-bin.stable.latest.default`)
+  because nixpkgs 26.05 ships rustc 1.95 < the 1.96 MSRV. Keep the nixpkgs channel
+  in sync with the consumer.
+- **`Itaykal/nixos-config` consumes this as the `dev-tools` flake input** and uses
+  **only** `inputs.dev-tools.packages.<system>.dev-tools` (built binaries). The
+  output attr name `dev-tools` and a buildable `packages.aarch64-darwin.dev-tools`
+  must keep working, or the mac's `darwin-rebuild` breaks. Renaming the output attr
+  is a breaking change for the consumer; the repo name is not (GitHub redirects).
+- The per-tool `config.toml`s under `crates/*/` are env-specific and were vendored
+  into `nixos-config` (`modules/features/dev-tools/*.toml`); they are no longer read
+  from this repo.
+- After any flake change, validate: `nix flake check` + `nix build
+  .#packages.aarch64-darwin.dev-tools`, and ideally re-`nix flake update dev-tools`
+  in `~/nixos-config` + rebuild.
 
-To cut a release, push a `v<version>` tag:
+## Releasing
+
+One `v<version>` tag → one GitHub Release; each tool ships as its own
+`<tool>-aarch64-apple-darwin.tar.gz`. One version covers all tools.
 
 ```sh
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-What happens: `.github/workflows/release.yml` triggers on `v*` tags, builds the whole workspace (`cargo build --release` on a `macos-14`/`aarch64-apple-darwin` runner), then packages **every** `[[bin]]` crate under `tools/crates/` into its own `<tool>-aarch64-apple-darwin.tar.gz` and attaches all of them to a single GitHub Release for that tag.
+`.github/workflows/release.yml` triggers on `v*`, builds the workspace on a
+`macos-14`/`aarch64-apple-darwin` runner, and packages every `[[bin]]` crate under
+`crates/`. New tools need no workflow edits. Releases are built only for
+`aarch64-apple-darwin`; other platforms build locally.
 
-**New tools need no workflow edits** — add the binary crate under `tools/crates/<tool>/`; the packaging loop discovers any crate with a `[[bin]]` automatically (library crates like `common` are skipped).
+## Environment gotchas (Claude's Bash sandbox)
 
-`install.sh` auto-discovers every `[[bin]]` crate under `tools/crates/` and, on Apple Silicon macOS with `gh` available, downloads each tool's tarball from the latest release into `tools/bin/` via `gh release download`. The repo is **private**, so the download is authenticated through `gh` — if `gh` is missing or not logged in (e.g. a fresh machine before `gh auth login`), it falls back to building everything from source via `make -C tools build`.
-
-Caveats:
-- Releases are built only for `aarch64-apple-darwin`; other platforms always build locally.
-- Because the repo is private, asset downloads need `gh` authenticated for an account with access (`gh` is in the Brewfile).
-- Pushing a commit/tag that adds or changes `.github/workflows/*` requires a GitHub token (or SSH key) with the `workflow` scope.
+- `gh`/`nix` are not on Claude's Bash PATH by default — prepend
+  `export PATH="/etc/profiles/per-user/itayka/bin:$PATH"`.
+- Pushing needs an account switch: `gh auth switch --user Itaykal` (then switch back
+  to `itayka_dream`).
+- Nix builds need a token to avoid GitHub rate limits:
+  `export NIX_CONFIG="access-tokens = github.com=$(gh auth token)"`. The first build
+  pulls the full Rust toolchain (~15 min) — run it in the background.
+- Pushing a commit/tag that changes `.github/workflows/*` needs a token (or SSH key)
+  with the `workflow` scope.

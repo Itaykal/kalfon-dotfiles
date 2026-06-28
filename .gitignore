@@ -1,5 +1,14 @@
-.a5c/
 .DS_Store
 
-# Rust tools: compiled binaries linked here by `make -C tools/rust build`
-tools/bin/
+# Rust build artifacts
+/target
+/bin
+
+# Nix build symlink
+result
+
+# Local agent/editor state
+.a5c/
+.agents/
+.claude/
+skills-lock.json
