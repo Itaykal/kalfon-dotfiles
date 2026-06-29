@@ -1,0 +1,29 @@
+name: ci
+
+# Fast PR/push gate: formatting, lints, and tests. Runs on Linux (the workspace
+# also targets x86_64-linux via the flake); the release build stays on macOS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: test
+        run: cargo test --locked
