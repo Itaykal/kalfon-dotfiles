@@ -9,8 +9,8 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 
-/// Near-black text for the H1 fuchsia bar (mirrors the Go tool's glamour H1).
-const INK: Color = Color::Rgb(0x1c, 0x14, 0x20);
+/// Near-black text for the H1 accent bar (mirrors the Go tool's glamour H1).
+const INK: Color = Color::Rgb(0x16, 0x16, 0x16);
 
 /// Convert Markdown into styled, wrappable terminal text.
 pub fn render(markdown: &str) -> Text<'static> {

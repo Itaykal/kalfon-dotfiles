@@ -3,20 +3,20 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
-/// Fuchsia — the signature accent color.
-pub const ACCENT: Color = Color::Rgb(0xf0, 0xab, 0xfc);
-/// Dark purple selection background.
-pub const SEL_BG: Color = Color::Rgb(0x3a, 0x1f, 0x37);
+/// Soft blue — the signature accent color (Oxocarbon).
+pub const ACCENT: Color = Color::Rgb(0x82, 0xcf, 0xff);
+/// Neutral grey selection background.
+pub const SEL_BG: Color = Color::Rgb(0x26, 0x26, 0x26);
 /// Default row foreground.
 pub const FG: Color = Color::Rgb(0xc6, 0xc6, 0xc6);
 /// Bright foreground for the selected row / live query.
-pub const FG_BRIGHT: Color = Color::Rgb(0xff, 0xff, 0xff);
-/// Frame/border color — a subtle purple-tinted gray.
-pub const BORDER: Color = Color::Rgb(0x4a, 0x40, 0x55);
+pub const FG_BRIGHT: Color = Color::Rgb(0xf2, 0xf4, 0xf8);
+/// Frame/border color — a neutral grey.
+pub const BORDER: Color = Color::Rgb(0x39, 0x39, 0x39);
 /// Muted secondary text.
-pub const MUTED: Color = Color::Rgb(0x8a, 0x8a, 0x8a);
+pub const MUTED: Color = Color::Rgb(0x6f, 0x6f, 0x6f);
 /// Dim tertiary text.
-pub const DIM: Color = Color::Rgb(0x5a, 0x5a, 0x5a);
+pub const DIM: Color = Color::Rgb(0x52, 0x52, 0x52);
 
 /// The query prompt (`❯`).
 pub fn prompt() -> Style {
