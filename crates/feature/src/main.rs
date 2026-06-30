@@ -120,9 +120,15 @@ fn run() -> Result<u8> {
                 Action::Worktree => {
                     let base = (!worktree_dir.is_empty()).then_some(worktree_dir.as_str());
                     let path = vcs::worktree_add(&branch, base)?;
-                    // The TUI draws to stderr, so stdout carries just the path —
-                    // copy it or `cd "$(feature)"` into the new worktree.
-                    println!("{}", path.display());
+                    // Emit the new worktree path so the shell can cd into it. The
+                    // picker's inline viewport probes the cursor on stdout, so the
+                    // `feature` wrapper must not capture stdout — it passes
+                    // $FEATURE_CD_FILE and reads the path from there. Fall back to
+                    // stdout for manual `cd "$(feature)"` use.
+                    match std::env::var_os("FEATURE_CD_FILE") {
+                        Some(f) => std::fs::write(&f, format!("{}\n", path.display()))?,
+                        None => println!("{}", path.display()),
+                    }
                 }
             }
             Ok(0)
