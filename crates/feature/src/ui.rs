@@ -101,9 +101,11 @@ pub fn run(
     Ok(app.result)
 }
 
+/// Height of the inline viewport (like `fzf --height 40%`): a fraction of the
+/// screen, clamped so it's always usable but never the whole terminal.
 fn viewport_height() -> u16 {
     let rows = crossterm::terminal::size().map(|(_, r)| r).unwrap_or(24);
-    let want = (rows as f32 * 0.4) as u16;
+    let want = (rows as f32 * 0.4) as u16 + 3;
     want.clamp(12.min(rows), rows.max(8))
 }
 
@@ -588,8 +590,13 @@ impl App {
     }
 
     fn render(&mut self, f: &mut Frame) {
+        // fzf-style: the two-pane UI fills the (inline) viewport flush to its
+        // edges — no dim backdrop, no centered floating window.
+        let area = f.area();
+        f.render_widget(Block::default().style(theme::panel()), area);
+
         let [panes, footer] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(f.area());
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
         let [left, right] =
             Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
                 .areas(panes);
@@ -614,6 +621,7 @@ impl App {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(theme::title())
+            .style(theme::panel())
             .title_top(Line::from(Span::styled(" new issue ", theme::title())));
         let inner = block.inner(modal);
         f.render_widget(block, modal);

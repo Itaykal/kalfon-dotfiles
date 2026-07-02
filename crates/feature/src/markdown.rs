@@ -6,11 +6,8 @@
 
 use common::theme;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-
-/// Near-black text for the H1 accent bar (mirrors the Go tool's glamour H1).
-const INK: Color = Color::Rgb(0x16, 0x16, 0x16);
 
 /// Convert Markdown into styled, wrappable terminal text.
 pub fn render(markdown: &str) -> Text<'static> {
@@ -109,12 +106,12 @@ impl Renderer {
             Tag::Heading { level, .. } => {
                 self.flush();
                 self.blank();
-                // H1 is a filled fuchsia bar with dark text (like the title);
-                // deeper headings are plain accent.
+                // H1 is a filled accent bar with backdrop-dark text (like the
+                // title); deeper headings are plain accent.
                 let style = if level == HeadingLevel::H1 {
                     Style::default()
                         .bg(theme::ACCENT)
-                        .fg(INK)
+                        .fg(theme::BACKDROP)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()

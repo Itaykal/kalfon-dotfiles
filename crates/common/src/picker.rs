@@ -1,7 +1,8 @@
-//! A generic, fuzzy single-select picker rendered inline (fzf-style).
+//! A generic, fuzzy single-select picker rendered fzf-style.
 //!
 //! [`select`] takes any list plus a label closure, shows a fuzzy-filterable
-//! list inside a rounded frame with match highlighting in the dotfiles fuchsia
+//! list inside a rounded frame that fills an inline viewport flush to its edges
+//! (fzf-style — no dim backdrop or centered float) in the dotfiles Oxocarbon
 //! [`theme`], and returns the chosen item (or `None` on Esc/Ctrl-C).
 
 use anyhow::Result;
@@ -42,10 +43,9 @@ pub fn select<T>(
     }
 
     let labels: Vec<String> = items.iter().map(&label).collect();
-    let height = viewport_height(labels.len());
 
     let mut picker = Picker::new(&labels);
-    let mut guard = TermGuard::inline(height)?;
+    let mut guard = TermGuard::inline(viewport_height(labels.len()))?;
 
     let chosen: Option<usize> = loop {
         guard.terminal().draw(|frame| picker.render(frame, title))?;
@@ -156,18 +156,28 @@ impl<'a> Picker<'a> {
     }
 }
 
-/// Grow the box to fit the content, but cap it at a fraction of the screen so
-/// it has a stable size and scrolls when there are many items.
+/// Grow the inline viewport to fit the content, but cap it at a fraction of the
+/// screen (like `fzf --height`) so it has a stable size and scrolls when there
+/// are many items.
 fn viewport_height(item_count: usize) -> u16 {
     let term_rows = crossterm::terminal::size().map(|(_, r)| r).unwrap_or(24);
-    let cap =
-        ((term_rows as f32 * HEIGHT_FRACTION) as u16).clamp(CHROME + 3, term_rows.max(CHROME + 3));
+    let cap = ((term_rows as f32 * HEIGHT_FRACTION) as u16 + 3)
+        .clamp(CHROME + 3, term_rows.max(CHROME + 3));
     (item_count as u16 + CHROME).clamp(CHROME + 1, cap)
 }
 
 impl Picker<'_> {
     fn render(&mut self, frame: &mut ratatui::Frame, title: &str) {
         self.list_state.select(Some(self.selected));
+
+        // fzf-style: fill the viewport flush to its edges — no dim backdrop, no
+        // centered floating window. A bordered pane holds the query + list; the
+        // footer is a bare line below it (matching the `feature` picker).
+        let area = frame.area();
+        frame.render_widget(Block::default().style(theme::panel()), area);
+
+        let [pane, footer_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -183,15 +193,11 @@ impl Picker<'_> {
                 ))
                 .right_aligned(),
             );
-        let inner = block.inner(frame.area());
-        frame.render_widget(block, frame.area());
+        let inner = block.inner(pane);
+        frame.render_widget(block, pane);
 
-        let [query_area, list_area, footer_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .areas(inner);
+        let [query_area, list_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
 
         // Query line: accent ❯ + the live query, with the cursor at the end.
         let query_line = Line::from(vec![
@@ -228,8 +234,9 @@ impl Picker<'_> {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .thumb_style(theme::prompt())
-                .track_style(theme::footer());
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(theme::muted());
             frame.render_stateful_widget(scrollbar, list_area, &mut sb_state);
         }
 
@@ -357,10 +364,21 @@ mod tests {
     }
 
     #[test]
-    fn viewport_caps_and_grows() {
-        // Few items: sized to content (items + chrome).
-        assert_eq!(viewport_height(3), 3 + CHROME);
-        // Many items: capped well under a huge count.
-        assert!(viewport_height(1000) < 1000);
+    fn fills_the_area_flush_no_backdrop() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let labels: Vec<String> = (0..5).map(|i| format!("item-{i}")).collect();
+        let mut picker = Picker::new(&labels);
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| picker.render(f, "test")).unwrap();
+        let buf = term.backend().buffer();
+
+        // The picker fills the viewport flush — every corner is the panel
+        // surface, never the old dim backdrop.
+        for (x, y) in [(0, 0), (119, 0), (0, 39), (119, 39)] {
+            assert_eq!(buf[(x, y)].bg, theme::PANEL);
+            assert_ne!(buf[(x, y)].bg, theme::BACKDROP);
+        }
     }
 }
